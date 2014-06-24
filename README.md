@@ -11,6 +11,33 @@ The documents are then concatenated to form a new document and the new document 
 
 The script is written in Python 3 and uses Google's [Diff Match Patch](https://code.google.com/p/google-diff-match-patch/) library, as [re-written and sped-up by @leutloff](https://github.com/leutloff/diff-match-patch-cpp-stl) and then turned into a [Python extension module](https://github.com/JoshData/diff_match_patch-python) by me. (A great pull request would be to replace that dependency with Python's built-in [difflib](https://docs.python.org/3/library/difflib.html) module. It'll be slower but then won't have any unusual dependencies.)
 
+Example
+-------
+
+Comparing these two documents:
+
+	<html>
+		Here is <b>some bold</b> text.
+	</html>
+
+and
+
+	<html>
+		Here is <i>some italic</i> content that shows how <tt>xml_diff</tt> works.
+	</html>	
+
+Yields:
+
+	<documents>
+		<html>
+			Here is <b>some <del>bold</del></b><del> text</del>.
+		</html>
+		<html>
+			Here is <i>some <ins>italic</ins></i><ins> content that shows how </ins><tt><ins>xml_diff</ins></tt><ins> works</ins>.
+		</html>
+	</documents>
+
+
 Installation
 ------------
 	
