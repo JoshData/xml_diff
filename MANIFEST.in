@@ -1,0 +1,2 @@
+include xml_diff/__init__.py xml_diff/__main__.py
+include LICENSE README.rst

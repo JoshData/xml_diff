@@ -134,7 +134,7 @@ def simplify_diff(diff_iter):
 			# the total lengths of two hunks ago and the current is creater
 			# than the length of the hunk in the middle...
 			if op in ('-', '+') and prev[0][0] == op and prev[1][0] == '=' \
-				and prev[0][1] + length > (prev[1][1]-1)**1.4:
+				and prev[1][1] > 0 and prev[0][1] + length > (prev[1][1]-1)**1.4:
 				prev.append( (op, prev[0][1] + prev[1][1] + length) )
 				prev.append( ('-' if op == '+' else '+', prev[1][1]) )
 				prev.pop(0)
@@ -142,7 +142,7 @@ def simplify_diff(diff_iter):
 				
 			# If the two hunks differ in op, combine them a different way.
 			elif op in ('-', '+') and prev[0][0] in ('-', '+') and prev[1][0] == '=' \
-				and prev[0][1] + length > (prev[1][1]-1)**1.4:
+				and prev[1][1] > 0 and prev[0][1] + length > (prev[1][1]-1)**1.4:
 				prev.append( (prev[0][0], prev[0][1] + prev[1][1]) )
 				prev.append( (op, prev[1][1] + length) )
 				prev.pop(0)
@@ -269,27 +269,3 @@ def add_tag_to_tail(node, wrapper, offset, length):
 	p.insert(p.index(node)+1, wrapper)
 
 
-if __name__ == "__main__":
-	import sys
-
-	if len(sys.argv) < 3:
-		print("Usage: python3 xml_diff.py [--tags del,ins] before.xml after.xml", file=sys.stderr)
-		sys.exit(1)
-
-	args = sys.argv[1:]
-
-	tags = ['del', 'ins']
-	if args[0] == "--tags":
-		args.pop(0)
-		tags = args.pop(0).split(",")
-
-	# Load the documents and munge them in-place.
-	dom1 = lxml.etree.parse(args[0]).getroot()
-	dom2 = lxml.etree.parse(args[1]).getroot()
-	compare(dom1, dom2, tags=tags)
-
-	# Output changed documents.
-	output = lxml.etree.Element("documents")
-	output.append(dom1)
-	output.append(dom2)
-	print(lxml.etree.tostring(output, encoding=str))
