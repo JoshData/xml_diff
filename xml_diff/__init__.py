@@ -12,6 +12,9 @@ from io import StringIO
 
 import diff_match_patch
 
+# See below. This is a code point in the Unicode private use area.
+node_end_sentinel = "\uE000"
+
 def compare(doc1, doc2, make_tag_func=None, tags=('del', 'ins')):
 	# Serialize the text content of the two documents.
 	doc1data = serialize_document(doc1)
@@ -47,8 +50,14 @@ def serialize_document(doc):
 	def append_text(text, node, texttype, state):
 		if not text: return # node.text or node.tail may be None
 		if text.strip() == "": return # probably not semantic, not worth comparing
+
+		# The XML document may not have whitespace between adjacent elements.
+		# When we do a word-by-word diff, the text of one element may abutt
+		# the text of the next element and form a "word". To prevent this, add
+		# a sentinel after each element that we remove during the diff step.
+
 		textlen = len(text)
-		state.text.write(text)
+		state.text.write(text + node_end_sentinel)
 		state.offsets.append([state.charcount, textlen, node, texttype])
 		state.charcount += textlen
 
@@ -73,14 +82,20 @@ def serialize_document(doc):
 
 def perform_diff(text1, text2):
 	# Do a word-by-word comparison, which produces more semantically sensible
-	# results.
+	# results. Remove the node_end_sentinel here.
 
 	word_map = { }
 
 	def text_to_words(text):
+		# The node_end_sentinel gets removed here. It is picked up by the
+		# second half of the regular expression since it is not a space
+		# or word character. So it acts as a word break. Then we discard it
+		# explicitly below.
 		words = re.split(r"(\s+|[^\s\w])", text)
 		encoded_text = StringIO()
 		for wd in words:
+			if wd == "": continue # when there are multiple delimiters in a row, we may get blacks from re.split
+			if wd == node_end_sentinel: continue
 			wd_code = word_map.setdefault(wd, chr(255 + len(word_map)) )
 			encoded_text.write(wd_code)
 		return encoded_text.getvalue()
@@ -173,10 +188,7 @@ def add_ins_del_tags(doc1data, doc2data, diff, make_tag_func):
 		idx += 1
 
 		if op == "=":
-			# Don't mark regions that are unchanged. Not sure why I'm
-			# double-checking that the text hasn't changed.
-			if doc1data.text[left_pos:left_pos+left_len] == doc2data.text[right_pos:right_pos+right_len]:
-				continue
+			continue
 
 		# Wrap the text on the left side in <del>.
 		if left_len > 0:
