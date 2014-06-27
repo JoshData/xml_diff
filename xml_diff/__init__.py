@@ -15,7 +15,7 @@ import diff_match_patch
 # See below. This is a code point in the Unicode private use area.
 node_end_sentinel = "\uE000"
 
-def compare(doc1, doc2, make_tag_func=None, tags=('del', 'ins')):
+def compare(doc1, doc2, make_tag_func=None, tags=('del', 'ins'), merge=False):
 	# Serialize the text content of the two documents.
 	doc1data = serialize_document(doc1)
 	doc2data = serialize_document(doc2)
@@ -32,7 +32,7 @@ def compare(doc1, doc2, make_tag_func=None, tags=('del', 'ins')):
 			if tag == 'ins': tag = tags[1]
 			return lxml.etree.Element(tag)
 
-	add_ins_del_tags(doc1data, doc2data, diff, make_tag_func)
+	add_ins_del_tags(doc1data, doc2data, diff, make_tag_func, merge)
 
 def serialize_document(doc):
 	# Takes an etree.Element and returns serialized text,
@@ -149,7 +149,7 @@ def simplify_diff(diff_iter):
 			# the total lengths of two hunks ago and the current is creater
 			# than the length of the hunk in the middle...
 			if op in ('-', '+') and prev[0][0] == op and prev[1][0] == '=' \
-				and prev[1][1] > 0 and prev[0][1] + length > (prev[1][1]-1)**1.4:
+				and prev[1][1] > 0 and prev[0][1] + length > (prev[1][1]-1)**1.6:
 				prev.append( (op, prev[0][1] + prev[1][1] + length) )
 				prev.append( ('-' if op == '+' else '+', prev[1][1]) )
 				prev.pop(0)
@@ -157,7 +157,7 @@ def simplify_diff(diff_iter):
 				
 			# If the two hunks differ in op, combine them a different way.
 			elif op in ('-', '+') and prev[0][0] in ('-', '+') and prev[1][0] == '=' \
-				and prev[1][1] > 0 and prev[0][1] + length > (prev[1][1]-1)**1.4:
+				and prev[1][1] > 0 and prev[0][1] + length > (prev[1][1]-1)**1.6:
 				prev.append( (prev[0][0], prev[0][1] + prev[1][1]) )
 				prev.append( (op, prev[1][1] + length) )
 				prev.pop(0)
@@ -181,7 +181,7 @@ def reformat_diff(diff_iter):
 		left_pos += left_len
 		right_pos += right_len
 	   
-def add_ins_del_tags(doc1data, doc2data, diff, make_tag_func):
+def add_ins_del_tags(doc1data, doc2data, diff, make_tag_func, merge):
 	# Iterate through the changes...
 	idx = 0
 	for op, left_pos, left_len, right_pos, right_len in diff:
@@ -190,26 +190,30 @@ def add_ins_del_tags(doc1data, doc2data, diff, make_tag_func):
 		if op == "=":
 			continue
 
-		# Wrap the text on the left side in <del>.
+		# Wrap the text on the left side in <del>. Insert it into the right side too.
 		if left_len > 0:
-			mark_text(doc1data, left_pos, left_len, "del", make_tag_func)
+			content = mark_text(doc1data, left_pos, left_len, "del", make_tag_func)
+			if merge: insert_text(doc2data, right_pos, content, "del", make_tag_func)
 
-		# Wrap the text on the right side in <ins>.
+		# Wrap the text on the right side in <ins>. Insert it into left side too.
 		if right_len > 0:
-			mark_text(doc2data, right_pos, right_len, "ins", make_tag_func)
+			content = mark_text(doc2data, right_pos, right_len, "ins", make_tag_func)
+			if merge: insert_text(doc1data, left_pos, content, "ins", make_tag_func)
 
 def mark_text(doc, offset, length, mode, make_tag_func):
-   # Wrap the text in doc starting at pos and for length characters
-   # in tags.
+	# Wrap the text in doc starting at pos and for length characters
+	# in tags.
+
+	content = ""
 
 	# Discard text ranges that are entirely before this changed region.
 	while len(doc.offsets) > 0 and (doc.offsets[0][0] + doc.offsets[0][1]) <= offset:
 		doc.offsets.pop(0)
 
 	# Process the text ranges that intersect this changed region.
-	while len(doc.offsets) > 0 and doc.offsets[0][0] < offset + length:
+	while len(doc.offsets) > 0 and (doc.offsets[0][0] < offset + length or (length == 0 and doc.offsets[0][0] == offset)):
 		# Add the tag.
-		add_tag(doc.offsets[0], offset, length, mode, make_tag_func)
+		content += add_tag(doc.offsets[0], offset, length, mode, make_tag_func)
 
 		# If this node is entirely consumed by the change, pop it and iterate.
 		if doc.offsets[0][0] + doc.offsets[0][1] <= offset + length:
@@ -220,6 +224,8 @@ def mark_text(doc, offset, length, mode, make_tag_func):
 			# keep the node for next time because there might be other changes
 			# in this node.
 			break
+
+	return content
 
 def add_tag(node_ref, offset, length, mode, make_tag_func):
 	# Get relative character position of start of change, might be negative.
@@ -247,12 +253,19 @@ def add_tag(node_ref, offset, length, mode, make_tag_func):
 	node_ref[2] = wrapper # this text is now tied to the new wrapper element
 	node_ref[3] = 1 # whether it was a text or tail before, it's a tail on the wrapper now
 
+	# Return the marked content.
+	return wrapper.text
+
 def add_tag_to_text(node, wrapper, offset, length):
 	# node.text is the text that appears before node's first child.
 	# We are to wrap some substring within a new node.
 
-	# Copy the wrapped text inside the wrapper.
-	wrapper.text = node.text[offset:offset+length]
+	# Copy the wrapped text inside the wrapper. Unless length == 0,
+	# which happens just when we're performing a merge and we're
+	# copying content from one document into the other. In that case,
+	# we've already set wrapper.text to something; don't overwrite it.
+	if length > 0:
+		wrapper.text = node.text[offset:offset+length]
 
 	# Copy the text that follows the wrapped text into the wrapper's tail.
 	wrapper.tail = node.text[offset+length:]
@@ -268,7 +281,8 @@ def add_tag_to_tail(node, wrapper, offset, length):
 	# We are to wrap some substring within a new node.
 
 	# Copy the wrapped text inside the wrapper.
-	wrapper.text = node.tail[offset:offset+length]
+	if length > 0:
+		wrapper.text = node.tail[offset:offset+length]
 
 	# Copy the text that follows the wrapped text into the wrapper's tail.
 	wrapper.tail = node.tail[offset+length:]
@@ -280,4 +294,19 @@ def add_tag_to_tail(node, wrapper, offset, length):
 	p = node.getparent()
 	p.insert(p.index(node)+1, wrapper)
 
+def insert_text(doc, offset, content, mode, make_tag_func):
+	# Insert text from one document into the other. E.g., inserted
+	# deleted text (from the left document) into the corresponding
+	# position in the right document.
+	#
+	# We do this by hacking back into mark_text. We ask it to mark
+	# a zero-length region using a wrapper node for which we provide
+	# the content.
+
+	def make_tag_func_2(mode):
+		n = make_tag_func(mode)
+		n.text = content
+		return n
+
+	mark_text(doc, offset, 0, mode, make_tag_func_2)
 
