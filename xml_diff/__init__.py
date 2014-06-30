@@ -34,6 +34,7 @@ def compare(
 		doc1data.text, doc2data.text,
 		word_separator_regex=word_separator_regex,
 		cleanup_semantic=cleanup_semantic)
+	diff = remove_node_end_sentinels(diff)
 	diff = simplify_diff(diff)
 	diff = reformat_diff(diff)
 
@@ -71,7 +72,8 @@ def serialize_document(doc):
 		# a sentinel after each element that we remove during the diff step.
 
 		textlen = len(text)
-		state.text.write(text + node_end_sentinel)
+		state.text.write(text)
+		state.text.write(node_end_sentinel)
 		state.offsets.append([state.charcount, textlen, node, texttype])
 		state.charcount += textlen
 
@@ -99,11 +101,10 @@ def perform_diff(text1, text2, word_separator_regex, cleanup_semantic):
 	# results. Remove the node_end_sentinel here.
 
 	word_map = { }
+	word_map[node_end_sentinel] = chr(254) # ensure it's in there
 
 	def text_to_words(text):
-		# The node_end_sentinel gets removed here in the process of separating
-		# the text on word breaks.
-		words = re.split('(' + re.escape(node_end_sentinel) + '+|' + word_separator_regex + ')', text)
+		words = re.split('(' + re.escape(node_end_sentinel) + '|' + word_separator_regex + ')', text)
 		encoded_text = StringIO()
 		for wd in words:
 			if wd == "": continue # when there are multiple delimiters in a row, we may get blanks from re.split
@@ -140,9 +141,14 @@ def perform_diff(text1, text2, word_separator_regex, cleanup_semantic):
 			text = text2[i2:i2+oplen]
 			i1 += oplen
 			i2 += oplen
-		text = "".join(word_map_inv[c] for c in text if c != word_map[node_end_sentinel])
+		text = "".join(word_map_inv[c] for c in text)
 		yield (op, text)
 
+def remove_node_end_sentinels(diff):
+	for op, text in diff:
+		text = text.replace(node_end_sentinel, "")
+		if len(text) == 0: continue
+		yield (op, text)
 	
 def simplify_diff(diff_iter):
 	# Simplify the diff by collapsing any regions with more changes than
@@ -155,6 +161,8 @@ def simplify_diff(diff_iter):
 		return '-' if op == '+' else '+'
 
 	for op, text in diff_iter:
+		if len(text) == 0: raise Exception()
+
 		prev.append( (op, text) )
 
 		cycle = True
@@ -208,6 +216,7 @@ def reformat_diff(diff_iter):
 	right_pos = 0
 	for op, text in diff_iter:
 		length = len(text)
+		if length == 0: raise Exception()
 		left_len = length if op in ("-", "=") else 0
 		right_len = length if op in ("+", "=") else 0
 		yield (op, left_pos, left_len, right_pos, right_len)
