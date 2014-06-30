@@ -22,6 +22,7 @@ def compare(
 	merge=False,
 	word_separator_regex=r"\s+|[^\s\w]", # spaces and punctuation
 	cleanup_semantic=True,
+	inline_elements=set(),
 	):
 
 	# Serialize the text content of the two documents.
@@ -43,7 +44,7 @@ def compare(
 			if tag == 'ins': tag = tags[1]
 			return lxml.etree.Element(tag)
 
-	add_ins_del_tags(doc1data, doc2data, diff, make_tag_func, merge)
+	add_ins_del_tags(doc1data, doc2data, diff, make_tag_func, merge, inline_elements)
 
 def serialize_document(doc):
 	# Takes an etree.Element and returns serialized text,
@@ -59,8 +60,10 @@ def serialize_document(doc):
 	state.charcount = 0
 
 	def append_text(text, node, texttype, state):
-		if not text: return # node.text or node.tail may be None
-		if text.strip() == "": return # probably not semantic, not worth comparing
+		# node.text or node.tail may be None or may be the empty string if there
+		# is no actual content there.
+		if text is None or len(text) == 0:
+			return
 
 		# The XML document may not have whitespace between adjacent elements.
 		# When we do a word-by-word diff, the text of one element may abutt
@@ -159,7 +162,7 @@ def simplify_diff(diff_iter):
 			cycle = False
 
 			if len(prev) >= 3 and prev[-1][0] in ('-', '+') and prev[-2][0] == '=':
-				threshold = (len(prev[-2][1])-1)**2
+				threshold = (len(prev[-2][1])-1)**1.5
 
 				if len(prev[-3][1]) + len(prev[-1][1]) > threshold:
 
@@ -211,7 +214,7 @@ def reformat_diff(diff_iter):
 		left_pos += left_len
 		right_pos += right_len
 	   
-def add_ins_del_tags(doc1data, doc2data, diff, make_tag_func, merge):
+def add_ins_del_tags(doc1data, doc2data, diff, make_tag_func, merge, inline_elements):
 	# Iterate through the changes...
 	idx = 0
 	for op, left_pos, left_len, right_pos, right_len in diff:
@@ -222,15 +225,15 @@ def add_ins_del_tags(doc1data, doc2data, diff, make_tag_func, merge):
 
 		# Wrap the text on the left side in <del>. Insert it into the right side too.
 		if left_len > 0:
-			content = mark_text(doc1data, left_pos, left_len, "del", make_tag_func)
-			if merge: insert_text(doc2data, right_pos, content, "del", make_tag_func)
+			content = mark_text(doc1data, left_pos, left_len, "del", make_tag_func, inline_elements)
+			if merge: insert_text(doc2data, right_pos, content, "del", make_tag_func, inline_elements)
 
 		# Wrap the text on the right side in <ins>. Insert it into left side too.
 		if right_len > 0:
-			content = mark_text(doc2data, right_pos, right_len, "ins", make_tag_func)
-			if merge: insert_text(doc1data, left_pos, content, "ins", make_tag_func)
+			content = mark_text(doc2data, right_pos, right_len, "ins", make_tag_func, inline_elements)
+			if merge: insert_text(doc1data, left_pos, content, "ins", make_tag_func, inline_elements)
 
-def mark_text(doc, offset, length, mode, make_tag_func):
+def mark_text(doc, offset, length, mode, make_tag_func, inline_elements):
 	# Wrap the text in doc starting at pos and for length characters
 	# in tags.
 
@@ -243,11 +246,71 @@ def mark_text(doc, offset, length, mode, make_tag_func):
 	# Process the text ranges that intersect this changed region.
 	while len(doc.offsets) > 0 and (doc.offsets[0][0] < offset + length or (length == 0 and doc.offsets[0][0] == offset)):
 		# Add the tag.
-		content += add_tag(doc.offsets[0], offset, length, mode, make_tag_func)
+		wrapper = add_tag(doc.offsets[0], offset, length, mode, make_tag_func)
+		content += wrapper.text
 
 		# If this node is entirely consumed by the change, pop it and iterate.
 		if doc.offsets[0][0] + doc.offsets[0][1] <= offset + length:
 			doc.offsets.pop(0)
+
+			# Merge and percolate the wrapper up the tree.
+			while True:
+				p = wrapper.getparent()
+				pp = p.getparent()
+				i = p.index(wrapper)
+
+				# If the wrapper immediately follows a wrapper element, merge them.
+				if i > 0 and p[i-1].tag == wrapper.tag and p[i-1].tail in ("", None):
+					# Move all of the content of p[i-1] to the beginning of wrapper
+					# and then delete p[i-1].
+					if wrapper.text is None: wrapper.text = ""
+					prev = p[i-1]
+					while len(prev) > 0:
+						n = prev[-1]
+						if n.tail is None: n.tail = ""
+						n.tail += wrapper.text
+						wrapper.text = ""
+						wrapper.insert(0, n)
+					if prev.text is not None:
+						wrapper.text = prev.text + wrapper.text
+					prev.text = None
+					p.remove(prev)
+					continue # iterate again in case of more percolation/merging
+
+
+				# Percolate the wrapper element up so that it contains its parent if
+				# a) the wrapper is the only child of the parent
+				#   i) the parent has no other children
+				#   ii) the wrapper has no tail (would be text within the parent)
+				#   iii) the parent has no text itself
+				# b) if the parent has a tail, it must be the next thing in the serialization stack
+				# c) the parent is not a root element of a document
+				# d) the parent is in the set of inline_elements (elements we permit to wrap around)
+				if len(p) == 1 and wrapper.tail in (None, "") and p.text in (None, "") \
+				 and (p.tail in (None, "") or (len(doc.offsets) > 0 and doc.offsets[0][2] == p and doc.offsets[0][3] == 1)) \
+				 and pp is not None \
+				 and p.tag in inline_elements:
+				 	# where is the parent node?
+					i = pp.index( wrapper.getparent() )
+					# reverse the hierarchy
+					p.remove(wrapper)
+					wrapper.append(p)
+					pp.insert(i, wrapper)
+					# move the text back down
+					p.text = wrapper.text
+					wrapper.text = None
+					# move the tail back up
+					if p.tail not in (None, ""):
+						doc.offsets[0][2] = wrapper
+					wrapper.tail = p.tail
+					p.tail = None
+					continue # iterate again in case of more percolation/merging
+
+				# Nothing changed so no more to do.
+				break
+
+
+
 		else:
 			# There is nothing more to mark in the document for this changed
 			# region (the changed region was entirely within that node), but
@@ -284,7 +347,7 @@ def add_tag(node_ref, offset, length, mode, make_tag_func):
 	node_ref[3] = 1 # whether it was a text or tail before, it's a tail on the wrapper now
 
 	# Return the marked content.
-	return wrapper.text
+	return wrapper
 
 def add_tag_to_text(node, wrapper, offset, length):
 	# node.text is the text that appears before node's first child.
@@ -324,7 +387,7 @@ def add_tag_to_tail(node, wrapper, offset, length):
 	p = node.getparent()
 	p.insert(p.index(node)+1, wrapper)
 
-def insert_text(doc, offset, content, mode, make_tag_func):
+def insert_text(doc, offset, content, mode, make_tag_func, inline_elements):
 	# Insert text from one document into the other. E.g., inserted
 	# deleted text (from the left document) into the corresponding
 	# position in the right document.
@@ -338,5 +401,5 @@ def insert_text(doc, offset, content, mode, make_tag_func):
 		n.text = content
 		return n
 
-	mark_text(doc, offset, 0, mode, make_tag_func_2)
+	mark_text(doc, offset, 0, mode, make_tag_func_2, inline_elements)
 
