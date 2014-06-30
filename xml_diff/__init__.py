@@ -34,8 +34,8 @@ def compare(
 		doc1data.text, doc2data.text,
 		word_separator_regex=word_separator_regex,
 		cleanup_semantic=cleanup_semantic)
-	diff = remove_node_end_sentinels(diff)
 	diff = simplify_diff(diff)
+	diff = remove_node_end_sentinels(diff)
 	diff = reformat_diff(diff)
 
 	# Add <ins>/<del> tags. The documents are modified in-place.
@@ -142,7 +142,9 @@ def perform_diff(text1, text2, word_separator_regex, cleanup_semantic):
 			i1 += oplen
 			i2 += oplen
 		text = "".join(word_map_inv[c] for c in text)
-		yield (op, text)
+		for t in re.split("(" + re.escape(node_end_sentinel) + ")", text):
+			if t != "":
+				yield (op, t)
 
 def remove_node_end_sentinels(diff):
 	for op, text in diff:
@@ -171,6 +173,8 @@ def simplify_diff(diff_iter):
 
 			if len(prev) >= 3 and prev[-1][0] in ('-', '+') and prev[-2][0] == '=':
 				threshold = (len(prev[-2][1])-1)**1.5
+				if node_end_sentinel in text:
+					threshold = 1000
 
 				if len(prev[-3][1]) + len(prev[-1][1]) > threshold:
 
