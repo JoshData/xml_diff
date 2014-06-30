@@ -107,8 +107,7 @@ def perform_diff(text1, text2, word_separator_regex, cleanup_semantic):
 		encoded_text = StringIO()
 		for wd in words:
 			if wd == "": continue # when there are multiple delimiters in a row, we may get blanks from re.split
-			if wd == node_end_sentinel: continue
-			if node_end_sentinel in wd: raise ValueError(wd)
+			if wd != node_end_sentinel and node_end_sentinel in wd: raise ValueError(wd)
 			wd_code = word_map.setdefault(wd, chr(255 + len(word_map)) )
 			encoded_text.write(wd_code)
 		return encoded_text.getvalue()
@@ -132,15 +131,16 @@ def perform_diff(text1, text2, word_separator_regex, cleanup_semantic):
 	i2 = 0
 	for op, oplen in wdiff:
 		if op == "-":
-			text = "".join(word_map_inv[text1[i1 + i]] for i in range(oplen) )
+			text = text1[i1:i1+oplen]
 			i1 += oplen
 		elif op == "+":
-			text = "".join(word_map_inv[text2[i2 + i]] for i in range(oplen) )
+			text = text2[i2:i2+oplen]
 			i2 += oplen
 		elif op == "=":
-			text = "".join(word_map_inv[text2[i2 + i]] for i in range(oplen) )
+			text = text2[i2:i2+oplen]
 			i1 += oplen
 			i2 += oplen
+		text = "".join(word_map_inv[c] for c in text if c != word_map[node_end_sentinel])
 		yield (op, text)
 
 	
