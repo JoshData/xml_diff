@@ -306,18 +306,22 @@ def mark_text(doc, offset, length, mode, make_tag_func, inline_elements):
 				 and p.tag in inline_elements:
 				 	# where is the parent node?
 					i = pp.index( wrapper.getparent() )
-					# reverse the hierarchy
+					# disentagle the hierarchy
 					p.remove(wrapper)
-					wrapper.append(p)
-					pp.insert(i, wrapper)
 					# move the text back down
 					p.text = wrapper.text
 					wrapper.text = None
+					# move the elements back down (the wrapper element may have structure inside of it)
+					for n in wrapper:
+						p.append(n)
 					# move the tail back up
 					if p.tail not in (None, ""):
 						doc.offsets[0][2] = wrapper
 					wrapper.tail = p.tail
 					p.tail = None
+					# put it back together
+					wrapper.append(p)
+					pp.insert(i, wrapper)
 					continue # iterate again in case of more percolation/merging
 
 				# Nothing changed so no more to do.
