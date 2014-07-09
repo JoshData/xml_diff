@@ -9,6 +9,7 @@
 import re
 import lxml.etree
 from io import StringIO
+from copy import deepcopy
 
 import diff_match_patch
 
@@ -250,7 +251,7 @@ def mark_text(doc, offset, length, mode, make_tag_func, inline_elements):
 	# Wrap the text in doc starting at pos and for length characters
 	# in tags.
 
-	content = ""
+	content = []
 
 	# Discard text ranges that are entirely before this changed region.
 	while len(doc.offsets) > 0 and (doc.offsets[0][0] + doc.offsets[0][1]) <= offset:
@@ -260,7 +261,7 @@ def mark_text(doc, offset, length, mode, make_tag_func, inline_elements):
 	while len(doc.offsets) > 0 and (doc.offsets[0][0] < offset + length or (length == 0 and doc.offsets[0][0] == offset)):
 		# Add the tag.
 		wrapper = add_tag(doc.offsets[0], offset, length, mode, make_tag_func)
-		content += wrapper.text
+		content.append(wrapper)
 
 		# If this node is entirely consumed by the change, pop it and iterate.
 		if doc.offsets[0][0] + doc.offsets[0][1] <= offset + length:
@@ -410,8 +411,25 @@ def insert_text(doc, offset, content, mode, make_tag_func, inline_elements):
 	# the content.
 
 	def make_tag_func_2(mode):
+		# Make an ins/del node, and then put inside it the contents
+		# of the ins/del nodes marked in the other document.
 		n = make_tag_func(mode)
-		n.text = content
+		n.text = ""
+		for c in content:
+			# c is an ins or del node from the other document
+			if c.tag != n.tag: raise ValueError()
+
+			# copy its contents here
+			if c.text:
+				if len(n) == 0:
+					n.text += c.text
+				else:
+					n[-1].tail += c.text
+			for cc in c:
+				cc = deepcopy(cc)
+				n.append(cc)
+				if cc.tail == None: cc.tail = ""
+
 		return n
 
 	mark_text(doc, offset, 0, mode, make_tag_func_2, inline_elements)
