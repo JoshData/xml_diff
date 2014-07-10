@@ -91,6 +91,13 @@ def serialize_document(doc):
 	# Recursively serialize the document.
 	recurse_on(doc, state)
 
+	if len(state.offsets) == 0:
+		# The document may be empty. This will cause problems for
+		# inserting merged content. Add a record for the empty text
+		# of the root element.
+		if doc.text == None: doc.text = ""
+		state.offsets.append([0, 0, doc, 0])
+
 	# Replace the io.StringIO with just the string content.
 	state.text = state.text.getvalue()
 
@@ -254,17 +261,25 @@ def mark_text(doc, offset, length, mode, make_tag_func, inline_elements):
 	content = []
 
 	# Discard text ranges that are entirely before this changed region.
-	while len(doc.offsets) > 0 and (doc.offsets[0][0] + doc.offsets[0][1]) <= offset:
+	# Don't pop the very last node, though, since we may want to insert merged
+	# content at the very end of the document.
+	while len(doc.offsets) > 1 and (doc.offsets[0][0] + doc.offsets[0][1]) <= offset:
 		doc.offsets.pop(0)
 
 	# Process the text ranges that intersect this changed region.
-	while len(doc.offsets) > 0 and (doc.offsets[0][0] < offset + length or (length == 0 and doc.offsets[0][0] == offset)):
+	while len(doc.offsets) > 0 and ((doc.offsets[0][0] < offset + length) or (length == 0 and doc.offsets[0][0] == offset)):
+
 		# Add the tag.
 		wrapper = add_tag(doc.offsets[0], offset, length, mode, make_tag_func)
 		content.append(wrapper)
 
 		# If this node is entirely consumed by the change, pop it and iterate.
 		if doc.offsets[0][0] + doc.offsets[0][1] <= offset + length:
+			# Don't pop the last node in case we need to insert content at
+			# the very end of the document. See above.
+			if len(doc.offsets) == 1:
+				break
+
 			doc.offsets.pop(0)
 
 			# Merge and percolate the wrapper up the tree. If we make either
@@ -280,6 +295,9 @@ def mark_text(doc, offset, length, mode, make_tag_func, inline_elements):
 			# keep the node for next time because there might be other changes
 			# in this node.
 			break
+
+	if len(content) == 0:
+		raise Exception("Content did not get marked up (%d+%d): '%s'" % (offset, length, doc.text[offset:offset+length]))
 
 	return content
 
