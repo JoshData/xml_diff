@@ -267,67 +267,12 @@ def mark_text(doc, offset, length, mode, make_tag_func, inline_elements):
 		if doc.offsets[0][0] + doc.offsets[0][1] <= offset + length:
 			doc.offsets.pop(0)
 
-			# Merge and percolate the wrapper up the tree.
+			# Merge and percolate the wrapper up the tree. If we make either
+			# operation, iterate and try again.
 			while True:
-				p = wrapper.getparent()
-				pp = p.getparent()
-				i = p.index(wrapper)
-
-				# If the wrapper immediately follows a wrapper element, merge them.
-				if i > 0 and p[i-1].tag == wrapper.tag and p[i-1].tail in ("", None):
-					# Move all of the content of p[i-1] to the beginning of wrapper
-					# and then delete p[i-1].
-					if wrapper.text is None: wrapper.text = ""
-					prev = p[i-1]
-					while len(prev) > 0:
-						n = prev[-1]
-						if n.tail is None: n.tail = ""
-						n.tail += wrapper.text
-						wrapper.text = ""
-						wrapper.insert(0, n)
-					if prev.text is not None:
-						wrapper.text = prev.text + wrapper.text
-					prev.text = None
-					p.remove(prev)
-					continue # iterate again in case of more percolation/merging
-
-
-				# Percolate the wrapper element up so that it contains its parent if
-				# a) the wrapper is the only child of the parent
-				#   i) the parent has no other children
-				#   ii) the wrapper has no tail (would be text within the parent)
-				#   iii) the parent has no text itself
-				# b) if the parent has a tail, it must be the next thing in the serialization stack
-				# c) the parent is not a root element of a document
-				# d) the parent is in the set of inline_elements (elements we permit to wrap around)
-				if len(p) == 1 and wrapper.tail in (None, "") and p.text in (None, "") \
-				 and (p.tail in (None, "") or (len(doc.offsets) > 0 and doc.offsets[0][2] == p and doc.offsets[0][3] == 1)) \
-				 and pp is not None \
-				 and p.tag in inline_elements:
-				 	# where is the parent node?
-					i = pp.index( wrapper.getparent() )
-					# disentagle the hierarchy
-					p.remove(wrapper)
-					# move the text back down
-					p.text = wrapper.text
-					wrapper.text = None
-					# move the elements back down (the wrapper element may have structure inside of it)
-					for n in wrapper:
-						p.append(n)
-					# move the tail back up
-					if p.tail not in (None, ""):
-						doc.offsets[0][2] = wrapper
-					wrapper.tail = p.tail
-					p.tail = None
-					# put it back together
-					wrapper.append(p)
-					pp.insert(i, wrapper)
-					continue # iterate again in case of more percolation/merging
-
-				# Nothing changed so no more to do.
-				break
-
-
+				if merge_with_previous(wrapper): continue
+				if perculate_up(wrapper, doc, inline_elements): continue
+				break # no more changes
 
 		else:
 			# There is nothing more to mark in the document for this changed
@@ -337,6 +282,71 @@ def mark_text(doc, offset, length, mode, make_tag_func, inline_elements):
 			break
 
 	return content
+
+def merge_with_previous(wrapper):
+	p = wrapper.getparent()
+	i = p.index(wrapper)
+
+	# Only if the wrapper immediately follows a wrapper element, merge them.
+	if i == 0 or p[i-1].tag != wrapper.tag or p[i-1].tail not in ("", None):
+		return False
+
+	# Move all of the content of p[i-1] to the beginning of wrapper
+	# and then delete p[i-1].
+	if wrapper.text is None: wrapper.text = ""
+	prev = p[i-1]
+	while len(prev) > 0:
+		n = prev[-1]
+		if n.tail is None: n.tail = ""
+		n.tail += wrapper.text
+		wrapper.text = ""
+		wrapper.insert(0, n)
+	if prev.text is not None:
+		wrapper.text = prev.text + wrapper.text
+	prev.text = None
+	p.remove(prev)
+
+	return True
+
+def perculate_up(wrapper, doc, inline_elements):
+	# Percolate the wrapper element up so that it contains its parent if
+	# a) the wrapper is the only child of the parent
+	#   i) the parent has no other children
+	#   ii) the wrapper has no tail (would be text within the parent)
+	#   iii) the parent has no text itself
+	# b) if the parent has a tail, it must be the next thing in the serialization stack
+	# c) the parent is not a root element of a document
+	# d) the parent is in the set of inline_elements (elements we permit to wrap around)
+
+	p = wrapper.getparent()
+	pp = p.getparent()
+	i = p.index(wrapper)
+
+	if len(p) > 1 or wrapper.tail not in (None, "") or p.text not in (None, "") \
+	 or (p.tail not in (None, "") and (len(doc.offsets) == 0 or doc.offsets[0][2] != p or doc.offsets[0][3] != 1)) \
+	 or pp is None \
+	 or p.tag not in inline_elements:
+	 	return False
+
+ 	# where is the parent node?
+	i = pp.index( wrapper.getparent() )
+	# disentagle the hierarchy
+	p.remove(wrapper)
+	# move the text back down
+	p.text = wrapper.text
+	wrapper.text = None
+	# move the elements back down (the wrapper element may have structure inside of it)
+	for n in wrapper:
+		p.append(n)
+	# move the tail back up
+	if p.tail not in (None, ""):
+		doc.offsets[0][2] = wrapper
+	wrapper.tail = p.tail
+	p.tail = None
+	# put it back together
+	wrapper.append(p)
+	pp.insert(i, wrapper)
+	return True
 
 def add_tag(node_ref, offset, length, mode, make_tag_func):
 	# Get relative character position of start of change, might be negative.
