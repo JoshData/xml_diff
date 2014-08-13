@@ -7,7 +7,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='xml_diff',
-    version='0.5.0',
+    version='0.6.0',
     author=u'Joshua Tauberer',
     author_email=u'jt@occams.info',
     packages = find_packages(),
