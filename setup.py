@@ -16,5 +16,5 @@ setup(
     description='Compares two XML documents by diffing their text, ignoring structure, and wraps changed text in <del>/<ins> tags.',
     long_description=open("README.rst").read(),
     keywords = "compare diff XML",
-    install_requires=["lxml", "diff_match_patch_python"],
+    install_requires=["lxml"],
 )

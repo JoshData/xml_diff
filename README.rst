@@ -9,7 +9,7 @@ The comparison is completely blind to the structure of the two XML documents. It
 
 The documents are then concatenated to form a new document and the new document is printed on standard output. Or use this as a library and call ``compare`` yourself with two ``lxml.etree.Element`` nodes (the roots of your documents).
 
-The script is written in Python 3 and uses Google's Diff Match Patch library <https://code.google.com/p/google-diff-match-patch/>, as re-written and sped-up by @leutloff <https://github.com/leutloff/diff-match-patch-cpp-stl> and then turned into a Python extension module by me <https://github.com/JoshData/diff_match_patch-python>. (A great pull request would be to replace that dependency with Python's built-in difflib <https://docs.python.org/3/library/difflib.html> module. It'll be slower but then won't have any unusual dependencies.)
+The script is written in Python 3. The module works with any Google Diff Match Patch-compatible differencing library. You provide it a differ function which takes two strings and returns a list of (op, length) tuples, where op is "+" (insertion), "-" (deletion), or "0" (no change). If will use my extension module <https://github.com/JoshData/diff_match_patch-python> if it is available, falling back on the pure-Python <https://code.google.com/p/google-diff-match-patch/source/browse/trunk/python3/diff_match_patch.py> if it is available, or else the not very useful Python built-in difflib.
 
 Example
 -------
@@ -41,13 +41,19 @@ First install the module::
 
 	pip install xml_diff
 
-On Ubuntu, apt-get installing ``python3-lxml`` or ``libxml2-dev`` and ``libxslt1-dev`` might be necessary. When installing from source, you'll need the dependencies ``lxml`` and ``diff_patch_patch_python``.
+On Ubuntu, apt-get installing ``python3-lxml`` or ``libxml2-dev`` and ``libxslt1-dev`` might be necessary. When installing from source, you'll need ``lxml`` too (but pip will get it for you automatically).
 
-To do this you can call the module from the command line::
+Then call the module from the command line::
 
 	python -m xml_diff  --tags del,ins doc1.xml doc2.xml > changes.xml
 
-Or use the module from Python::
+For really fast comparisons, get Google's Diff Match Patch library <https://code.google.com/p/google-diff-match-patch/>, as re-written and sped-up by @leutloff <https://github.com/leutloff/diff-match-patch-cpp-stl> and then turned into a Python extension module by me <https://github.com/JoshData/diff_match_patch-python>::
+
+	pip install diff_match_patch_python
+
+The command-line tool (above) will use this library if it is available.
+
+Use the module from Python like so::
 
 	import lxml.etree
 	from xml_diff import compare
@@ -57,3 +63,7 @@ Or use the module from Python::
 	compare(dom1, dom2)
 
 The two DOMs are modified in-place.
+
+If you can't install diff_match_patch_python, you can also get the pure-Python version of diff_match_patch.py from <https://code.google.com/p/google-diff-match-patch/source/browse/trunk/python3/diff_match_patch.py>. (The command-line tool will fall back to this library if it is available.)
+
+Or you can pass in your own comparison library as the third argument. (See xml_diff/__init__.py's default_differ function for how it would work.)

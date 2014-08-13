@@ -11,18 +11,44 @@ import lxml.etree
 from io import StringIO
 from copy import deepcopy
 
-import diff_match_patch
-
 # See below. This is a code point in the Unicode private use area.
 node_end_sentinel = "\uE000"
 
+def default_differ(text1, text2):
+	try:
+		import diff_match_patch
+		if hasattr(diff_match_patch, "diff_match_patch"):
+			# https://code.google.com/p/google-diff-match-patch/source/browse/trunk/python3/diff_match_patch.py
+			for op, oplen in diff_match_patch.diff_match_patch().diff_main(text1, text2):
+				if op == -1: op = "-"
+				if op == +1: op = "+"
+				if op ==  0: op = "="
+				yield (op, len(oplen))
+		else:
+			# https://pypi.python.org/pypi/diff_match_patch_python/1.0.1
+			for x in diff_match_patch.diff(text1, text2):
+				yield x
+	except ImportError:
+		import difflib
+		diff = difflib.SequenceMatcher(text1, text2, autojunk=False)
+		for (tag, i1, i2, j1, j2) in diff.get_opcodes():
+			if tag == "equal":
+				yield ("=", i2-i1)
+			elif tag == "insert":
+				yield ("+", j2-j1)
+			elif tag == "delete":
+				yield ("-", i2-i1)
+			elif tag == "replace":
+				yield ("-", i2-i1)
+				yield ("+", j2-j1)
+
 def compare(
 	doc1, doc2,
+	differ=default_differ,
 	make_tag_func=None,
 	tags=('del', 'ins'),
 	merge=False,
 	word_separator_regex=r"\s+|[^\s\w]", # spaces and punctuation
-	cleanup_semantic=True,
 	):
 
 	# Serialize the text content of the two documents.
@@ -31,9 +57,9 @@ def compare(
 
 	# Compute the differences in the serialized text.
 	diff = perform_diff(
+		differ,
 		doc1data.text, doc2data.text,
-		word_separator_regex=word_separator_regex,
-		cleanup_semantic=cleanup_semantic)
+		word_separator_regex=word_separator_regex)
 	diff = simplify_diff(diff)
 	diff = remove_node_end_sentinels(diff)
 	diff = reformat_diff(diff)
@@ -103,7 +129,7 @@ def serialize_document(doc):
 	# Return the serialized data.
 	return state
 
-def perform_diff(text1, text2, word_separator_regex, cleanup_semantic):
+def perform_diff(differ, text1, text2, word_separator_regex):
 	# Do a word-by-word comparison, which produces more semantically sensible
 	# results. Remove the node_end_sentinel here.
 
@@ -126,11 +152,7 @@ def perform_diff(text1, text2, word_separator_regex, cleanup_semantic):
 	text2 = text_to_words(text2)
 
 	# Perform the diff on the hacky Unicode string.
-	wdiff = diff_match_patch.diff(
-		text1, text2,
-		timelimit=0,
-        checklines=False,
-        cleanup_semantic=cleanup_semantic)
+	wdiff = differ(text1, text2)
 
 	# Map everything back to real characters.
 	word_map_inv = dict((v, k) for (k, v) in word_map.items())
@@ -148,6 +170,8 @@ def perform_diff(text1, text2, word_separator_regex, cleanup_semantic):
 			text = text2[i2:i2+oplen]
 			i1 += oplen
 			i2 += oplen
+		else:
+			raise ValueError("differ returned an invalid op code: " + repr(op))
 		text = "".join(word_map_inv[c] for c in text)
 		for t in re.split("(" + re.escape(node_end_sentinel) + ")", text):
 			if t != "":
