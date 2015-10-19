@@ -131,12 +131,16 @@ def serialize_document(doc):
 
 def perform_diff(differ, text1, text2, word_separator_regex):
 	# Do a word-by-word comparison, which produces more semantically sensible
-	# results. Remove the node_end_sentinel here.
+	# results. Then turn the comparison back to characters and yield diff
+	# operations (+/-/=) over real character ranges, such that the ranges
+	# never cross an element.
 
 	word_map = { }
 	word_map[node_end_sentinel] = chr(254) # ensure it's in there
 
 	def text_to_words(text):
+		# Split on non-word characters and the node_end_sentinel, so that words
+		# do not cross elements.
 		words = re.split('(' + re.escape(node_end_sentinel) + '|' + word_separator_regex + ')', text)
 		encoded_text = StringIO()
 		for wd in words:
@@ -147,7 +151,7 @@ def perform_diff(differ, text1, text2, word_separator_regex):
 		return encoded_text.getvalue()
 
 	# Map the text strings to a hacky Unicode character array where characters
-	# map to words in the original.
+	# map to words in the original, using the same word_map for both documents.
 	text1 = text_to_words(text1)
 	text2 = text_to_words(text2)
 
@@ -155,24 +159,37 @@ def perform_diff(differ, text1, text2, word_separator_regex):
 	wdiff = differ(text1, text2)
 
 	# Map everything back to real characters.
+	# Yield to the caller diff operations over the real strings we were
+	# asked to compare.
 	word_map_inv = dict((v, k) for (k, v) in word_map.items())
 	diff = []
 	i1 = 0
 	i2 = 0
 	for op, oplen in wdiff:
+		# The diff is an array of (operation, text_length) tuples
+		# that we can go back to the original hacky word-coded
+		# "text" arrays for.
 		if op == "-":
+			# deleted words
 			text = text1[i1:i1+oplen]
 			i1 += oplen
 		elif op == "+":
+			# inserted words
 			text = text2[i2:i2+oplen]
 			i2 += oplen
 		elif op == "=":
+			# same content in both strings
 			text = text2[i2:i2+oplen]
 			i1 += oplen
 			i2 += oplen
 		else:
 			raise ValueError("differ returned an invalid op code: " + repr(op))
+
+		# Convert back to real characters by mapping hacky codes to word strings.
 		text = "".join(word_map_inv[c] for c in text)
+
+		# Yield a separate operation between each node_end_sentinel so that no
+		# operation involves text that crosses into more than one element.
 		for t in re.split("(" + re.escape(node_end_sentinel) + ")", text):
 			if t != "":
 				yield (op, t)
@@ -245,7 +262,7 @@ def simplify_diff(diff_iter):
 		yield p
 
 def reformat_diff(diff_iter):
-	# Re-format the operations of the diffs to indicate the byte
+	# Re-format the operations of the diffs to indicate the character
 	# offsets on the left and right rather than op and text.
 	left_pos = 0
 	right_pos = 0
@@ -267,12 +284,14 @@ def add_ins_del_tags(doc1data, doc2data, diff, make_tag_func, merge):
 		if op == "=":
 			continue
 
-		# Wrap the text on the left side in <del>. Insert it into the right side too.
+		# Wrap the text on the left side in <del>. Insert it into the right side too
+		# if 'merge' is true.
 		if left_len > 0:
 			content = mark_text(doc1data, left_pos, left_len, "del", make_tag_func)
 			if merge: insert_text(doc2data, right_pos, content, "del", make_tag_func)
 
-		# Wrap the text on the right side in <ins>. Insert it into left side too.
+		# Wrap the text on the right side in <ins>. Insert it into left side too
+		# if 'merge' is true.
 		if right_len > 0:
 			content = mark_text(doc2data, right_pos, right_len, "ins", make_tag_func)
 			if merge: insert_text(doc1data, left_pos, content, "ins", make_tag_func)

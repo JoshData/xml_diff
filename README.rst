@@ -70,4 +70,18 @@ Or use the module from Python::
 
 The two DOMs are modified in-place.
 
-You can also pass in your own comparison library as the third argument. (See xml_diff/__init__.py's default_differ function for how it would work.)
+Optional Arguments
+------------------
+
+The ``compare`` function takes other optional keyword arguments:
+
+``merge`` is a boolean (default false) that indicates whether the comparison function should perform a merge. If true, ``dom1`` will contain not just ``<del>`` nodes but also ``<ins>`` nodes and, similarly, ``dom2`` will contain not just ``<ins>`` nodes but also ``<del>`` nodes. Although the two DOMs will now contain the same semantic information about changes, and the same text content, each preserves their original structure --- since the comparison is only over text and not structure. The new ``ins``/``del`` nodes contain content from the other document (including whole subtrees), and so there's no guarantee that the final documents will conform to any particular structural schema after this operation.
+
+``word_separator_regex`` (default ``r"\s+|[^\s\w]"``) is a regular expression for how to separate words. The default splits on one or more spaces in a row and single instances of non-word characters.
+
+``differ`` is a function that takes two arguments ``(text1, text2)`` and returns an iterator over difference operations given as tuples of the form ``(operation, text_length)``, where ``operation`` is one of ``"="`` (no change in text), ``"+"`` (text inserted into ``text2``), or ``"-"`` (text deleted from ``text1``). (See xml_diff/__init__.py's ``default_differ`` function for how the default differ works.)
+
+``tags`` is a two-tuple of tag names to use for deleted and inserted content. The default is ``('del', 'ins')``.
+
+``make_tag_func`` is a function that takes one argument, which is either ``"ins"`` or ``"del"``, and returns a new ``lxml.etree.Element`` to be inserted into the DOM to wrap changed content. If given, the ``tags`` argument is ignored.
+
