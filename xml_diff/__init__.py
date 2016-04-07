@@ -11,8 +11,13 @@ import lxml.etree
 from io import StringIO
 from copy import deepcopy
 
+# Python 2/3 compatibility - make unichr an alias for chr in Py3
+import sys
+if sys.version_info >= (3,):
+	unichr = chr
+
 # See below. This is a code point in the Unicode private use area.
-node_end_sentinel = "\uE000"
+node_end_sentinel = u"\uE000"
 
 def default_differ(text1, text2):
 	try:
@@ -26,7 +31,12 @@ def default_differ(text1, text2):
 				yield (op, len(oplen))
 		else:
 			# https://pypi.python.org/pypi/diff_match_patch_python/1.0.1
-			for x in diff_match_patch.diff(text1, text2):
+			# Use diff_unicode if defined (in Py2 only), else just the diff function.
+			if hasattr(diff_match_patch, 'diff_unicode'):
+				f = diff_match_patch.diff_unicode
+			else:
+				f = diff_match_patch.diff
+			for x in f(text1, text2):
 				yield x
 	except ImportError:
 		import difflib
@@ -92,6 +102,13 @@ def serialize_document(doc):
 		if text is None or len(text) == 0:
 			return
 
+		# In Python 2, the lxml.etree document may return str (bytes)
+		# instances for text. That's incompatible with io.StringIO.
+		# What encoding is it? Who knows. Hopefully it's just ASCII
+		# data, or else lxml.etree would have returned a unicode instance?
+		if type(text) == bytes:
+			text = text.decode("utf8")
+
 		# The XML document may not have whitespace between adjacent elements.
 		# When we do a word-by-word diff, the text of one element may abutt
 		# the text of the next element and form a "word". To prevent this, add
@@ -136,17 +153,17 @@ def perform_diff(differ, text1, text2, word_separator_regex):
 	# never cross an element.
 
 	word_map = { }
-	word_map[node_end_sentinel] = chr(254) # ensure it's in there
+	word_map[node_end_sentinel] = unichr(254) # ensure it's in there
 
 	def text_to_words(text):
 		# Split on non-word characters and the node_end_sentinel, so that words
 		# do not cross elements.
-		words = re.split('(' + re.escape(node_end_sentinel) + '|' + word_separator_regex + ')', text)
+		words = re.split(u'(' + re.escape(node_end_sentinel) + u'|' + word_separator_regex + u')', text)
 		encoded_text = StringIO()
 		for wd in words:
 			if wd == "": continue # when there are multiple delimiters in a row, we may get blanks from re.split
 			if wd != node_end_sentinel and node_end_sentinel in wd: raise ValueError(wd)
-			wd_code = word_map.setdefault(wd, chr(255 + len(word_map)) )
+			wd_code = word_map.setdefault(wd, unichr(255 + len(word_map)) )
 			encoded_text.write(wd_code)
 		return encoded_text.getvalue()
 

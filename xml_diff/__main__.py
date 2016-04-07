@@ -2,8 +2,12 @@ import sys
 import lxml.etree
 from xml_diff import compare
 
+# make an alias for Py3
+if sys.version_info >= (3,):
+	unicode = str
+
 if len(sys.argv) < 3:
-	print("Usage: python3 xml_diff.py [--tags del,ins] before.xml after.xml", file=sys.stderr)
+	print("Usage: python3 xml_diff.py [--tags del,ins] before.xml after.xml")
 	sys.exit(1)
 
 args = sys.argv[1:]
@@ -22,4 +26,4 @@ compare(dom1, dom2, tags=tags)
 output = lxml.etree.Element("documents")
 output.append(dom1)
 output.append(dom2)
-print(lxml.etree.tostring(output, encoding=str))
+print(lxml.etree.tostring(output, encoding=unicode))
